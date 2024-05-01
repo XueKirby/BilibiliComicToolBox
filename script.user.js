@@ -119,9 +119,8 @@
             accept: "application/json, text/plain, */*",
             "content-type": "application/json;charset=UTF-8",
           },
-          body: `{"page_num":${page},"page_size":15,"order":${
-            order === 4 ? 3 : order
-          },"wait_free":${order === 4 ? 1 : 0}}`,
+          body: `{"page_num":${page},"page_size":15,"order":${order === 4 ? 3 : order
+            },"wait_free":${order === 4 ? 1 : 0}}`,
           method: "POST",
           credentials: "include",
         }
@@ -155,6 +154,40 @@
         style.innerText += newStyle;
       },
     };
+  };
+  const createPriceTag = (price) => {
+    const tag = document.createElement("div");
+    tag.textContent = `${price}币`;
+    tag.className = "b-toolbox-price-tag";
+    return tag;
+  };
+  const processUnreadManga = async (manga, node) => {
+    const isUnread = manga.last_ep_short_title !== manga.latest_ep_short_title;
+    node.classList.add(isUnread ? 'b-toolbox-manga-card-unread' : 'b-toolbox-manga-card-read');
+  
+    if (isUnread) {
+      try {
+        const priceKey = `manga_price_${manga.comic_id}`;
+        const storedPrice = localStorage.getItem(priceKey);
+  
+        if (storedPrice !== null) {
+          node.appendChild(createPriceTag(parseInt(storedPrice)));
+        } else {
+          const { data: detail } = await api.getEpisodeBuyInfo(manga.latest_ep_id);
+          let price = detail?.pay_gold ?? 0;
+  
+          if (price === 0) {
+            const { data } = await api.getComicDetail(manga.comic_id);
+            price = data?.comic_type === 0 ? 0 : data?.ep_list?.slice(1).find(ep => ep?.pay_gold !== 0)?.pay_gold ?? 0;
+          }
+  
+          localStorage.setItem(priceKey, price.toString());
+          node.appendChild(createPriceTag(price));
+        }
+      } catch (error) {
+        console.error(`获取漫画：${manga.comic_id} 价格失败:`, error);
+      }
+    }
   };
   const styles = createStyles();
   if (location.pathname.match(/^\/detail\/mc\d+$/)) {
@@ -263,10 +296,9 @@
               statusDisplay.addStatus(`第${ep.ord}话${ep.title}无需购买`);
             } else {
               statusDisplay.addStatus(
-                `第${ep.ord}话${ep.title}话购买成功${
-                  buyRes.data?.auto_use_item
-                    ? "使用" + buyRes.data?.auto_use_item
-                    : ""
+                `第${ep.ord}话${ep.title}话购买成功${buyRes.data?.auto_use_item
+                  ? "使用" + buyRes.data?.auto_use_item
+                  : ""
                 }`
               );
             }
@@ -276,10 +308,9 @@
               statusDisplay.addStatus(`第${ep.ord}话${ep.title}无需购买`);
             } else {
               statusDisplay.addStatus(
-                `第${ep.ord}话${ep.title}话购买成功${
-                  buyRes.data?.auto_use_item
-                    ? "使用" + buyRes.data?.auto_use_item
-                    : ""
+                `第${ep.ord}话${ep.title}话购买成功${buyRes.data?.auto_use_item
+                  ? "使用" + buyRes.data?.auto_use_item
+                  : ""
                 }`
               );
             }
@@ -325,10 +356,37 @@
       btn.insertAdjacentHTML("beforeEnd", "<div>下载本书已购内容</div>");
       btn.className += "b-toolbox-toolbox-btn";
       parentPanel.append(btn);
+      const isChromium = "showDirectoryPicker" in window;
+      const downloadOptions = document.createElement("div");
+      downloadOptions.className = "b-toolbox-d-flex b-toolbox-flex-column";
+      parentPanel.append(downloadOptions);
+
+      const downloadLabel = document.createElement("label");
+      downloadLabel.innerText = "下载方式:";
+      downloadOptions.append(downloadLabel);
+
+      const selectDownload = document.createElement("select");
+      if (isChromium) {
+        const folderOption = document.createElement("option");
+        folderOption.value = "folder";
+        folderOption.text = "下载到文件夹";
+        selectDownload.add(folderOption);
+      }
+      downloadOptions.append(selectDownload);
+      const zipOption = document.createElement("option");
+      zipOption.value = "zip";
+      zipOption.text = "下载为ZIP文件";
+      selectDownload.add(zipOption);
+
+      const cbzOption = document.createElement("option");
+      cbzOption.value = "cbz";
+      cbzOption.text = "下载为CBZ文件";
+      selectDownload.add(cbzOption);
       btn.addEventListener("click", async () => {
         btn.disabled = true;
+        const downloadType = selectDownload.value;
         const { storage, needExport } = (() => {
-          if (window.showDirectoryPicker) {
+          if (downloadType === "folder") {
             return {
               storage: window.showDirectoryPicker({
                 id: "b-toolbox-download-folder",
@@ -392,9 +450,8 @@
           const epLocalPadding = epOrdString.includes(".")
             ? epOrdString.split(".")[1].length + 1 + epPadding
             : epPadding;
-          const epTitle = `${ep.ord.toString().padStart(epLocalPadding, "0")}-${
-            ep.title
-          }`;
+          const epTitle = `${ep.ord.toString().padStart(epLocalPadding, "0")}-${ep.title
+            }`;
           const epFolder = await comicFolder.getDirectoryHandle(
             safeFileName(epTitle),
             {
@@ -429,12 +486,26 @@
               epZipFolder.file(file.name, content);
             }
           }
+          if (downloadType === "cbz") {
+            statusDisplay.addStatus(`生成ComicInfo.xml`);
+            const comicMeta = `<?xml version="1.0" encoding="UTF-8"?>
+    <ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <Title>${comicInfo.data.title}</Title>
+      <Series>${comicInfo.data.title}</Series>
+      <Number>${comicInfo.data.last_ord}</Number>
+      <Count>${comicInfo.data.total}</Count>
+      <Volume>1</Volume>
+      <Author>${comicInfo.data.author_name.join(",")}</Author>
+      <Publisher>Bilibili</Publisher>
+    </ComicInfo>`;
+            comicZipFolder.file("ComicInfo.xml", comicMeta);
+          }
           const blob = await zip.generateAsync({ type: "blob" });
           dir.removeEntry(comicFolder.name, { recursive: true });
           const a = document.createElement("a");
           const url = URL.createObjectURL(blob);
           a.href = url;
-          a.download = `${comicFolder.name}.zip`;
+          a.download = `${comicFolder.name}.${downloadType}`;
           a.click();
           URL.revokeObjectURL(url);
         }
@@ -548,7 +619,7 @@
               const id = JSON.parse(node.dataset.biliMangaMsg).manga_id;
               const manga = mangaMap.get(id);
               if (manga) {
-                tasks.push(processUnreadManga(manga, node));
+                tasks.push(processUnreadManga(manga, node));;
               }
             }
           }
@@ -562,7 +633,7 @@
             const id = JSON.parse(node.dataset.biliMangaMsg).manga_id;
             const manga = mangaMap.get(id);
             if (manga) {
-              tasks.push(processUnreadManga(manga, node));
+              tasks.push(processUnreadManga(manga, node));;
             }
           }
         }
